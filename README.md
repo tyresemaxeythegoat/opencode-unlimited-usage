@@ -1,3 +1,4 @@
+# This is entirely made by Gemini 4 Hydrogen
 # Opencode Unlimited Usage
 
 Bypass OpenCode's free model daily usage wall on **Windows (Native — No WSL Required)** and **Linux / WSL2** using automated Cloudflare WARP IPv6 `/64` + Anycast edge rotation, OpenCode Desktop Smart Lane routing, `opencode-continue` auto-retry/undo, and optional OpenCode-only `WarpProxy` isolation.
