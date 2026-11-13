@@ -1,83 +1,98 @@
 # Opencode Unlimited Usage
 
-Bypass opencode's free model daily usage wall on Linux. One command install, self healing, home IP never leaks out.
+Bypass OpenCode's free model daily usage wall on **Windows (Native — No WSL Required)** and **Linux / WSL2** using automated Cloudflare WARP IPv6 `/64` + Anycast edge rotation, OpenCode Desktop Smart Lane routing, `opencode-continue` auto-retry/undo, and optional OpenCode-only `WarpProxy` isolation.
 
-I got tired of hitting "Free usage limit reached" an hour into a work session, so I built this. Been running it daily on my own box (including WSL2) — when the wall hits, the system notices and switches to a fresh identity by itself. I just re-send the message and keep working.
+Forked from [ElectronBreach/opencode-unlimited-usage](https://github.com/ElectronBreach/opencode-unlimited-usage) with full native Windows CLI & Desktop support, automated `opencode-continue` session recovery, and isolated OpenCode-only `WarpProxy` mode so WARP rotations never interrupt background apps on your PC.
 
 ## What actually happens (the short version)
 
 Opencode's free tier isn't keyed to your account. It's keyed to what their server *sees* on the other end:
 
-- your IPv6 /64 block (what Cloudflare WARP assigns you)
+- your IPv6 `/64` block (what Cloudflare WARP assigns you)
 - which Cloudflare edge node your requests land on
 
-Burn through your messages and that combo gets walled for the day. That's the whole wall. So the fix is equally simple — stop sending every request from the same combo:
+Burn through your messages and that combo gets walled for the day. This tool rotates both automatically:
 
-- all traffic goes through Cloudflare WARP (TUN mode, kernel level — your real IP never touches the request)
-- opencode.ai gets pinned to IPv6 only, so requests go out on your WARP /64
-- every launch picks a **random Cloudflare edge** from the live pool
-- when the wall hits anyway, a background watcher (zen-guard) re-registers WARP in ~10 seconds and you land on a **fresh /64** that has never been burned
-- burned /64 blocks go on a lifetime blacklist and are never reused
+- **Every launch** picks a fresh Cloudflare edge from the live `AAAA` pool (`opencode.ai` / `api.opencode.ai`) and generates a fresh device/machine ID.
+- **When a quota wall hits**, the background guard (or `opencode-continue`) blacklists the burned `/64`, re-registers Cloudflare WARP for a brand new `/64`, verifies it isn't on the lifetime blacklist (retrying up to 8 times), and resumes cleanly in ~10–15 seconds.
+- **On Windows**, Smart Lane (`lane_proxy.py`) can also tunnel OpenCode exclusively through Cloudflare WARP's local SOCKS5 `WarpProxy` (`127.0.0.1:40000`) while leaving the rest of Windows on your normal connection — failing closed (`502`) instead of leaking your ISP IP if WARP is disconnected.
 
-No parallel VPN circus, no proxy juggling. One WARP tunnel, rotated identities. A tunnel goes down = a kill-switch firewall drops everything instantly (v4 + v6), so your home IP can't leak even for a second while it repairs.
+---
 
-## Requirements
+## Install
 
-- Linux x86_64 (native or WSL2 — I test on WSL2)
-- systemd (basically any normal distro)
-- `sudo` access for the install
-- python3 (usually already there)
+### Windows (Native — No WSL Required)
 
-Install method per distro: apt (tested here), dnf/pacman (supported, uses
-cloudflare's rpm / AUR package — say hi if one misbehaves).
+**Requirements:**
+- Windows 10 or 11 (64-bit)
+- Python 3.8+ (with `python.exe` and `pythonw.exe` in `PATH`)
+- Cloudflare WARP (`warp-cli.exe` — the installer can install it via `winget` if missing)
+- OpenCode CLI and/or OpenCode Desktop
 
-## Install (one command)
+**Steps:**
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ELECTRONBREACH/opencode-unlimited-usage/main/install.sh | bash
+```powershell
+git clone https://github.com/tyresemaxeythegoat/opencode-unlimited-usage.git
+cd opencode-unlimited-usage
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-That's it. The installer:
+Or double-click **`install.bat`** inside the cloned folder. Close and reopen your terminal afterward so `PATH` updates take effect. See [README_WINDOWS.md](README_WINDOWS.md) for full Windows details.
 
-1. installs the official `opencode` CLI if you don't have it
-2. installs Cloudflare's `warp-cli` if you don't have it
-3. registers a fresh WARP identity and puts the tunnel in TUN mode
-4. installs a root-level **keeper** service (keeps the tunnel alive + kill-switch always on)
-5. installs a user-level **zen-guard** service (watches for the wall, auto-rotates your /64)
-6. drops a small wrapper so that when you type `opencode`, requests ride the fresh lane
+### Linux & WSL2 (Bash)
 
-Close and reopen your terminal after install (so PATH picks things up), then just use `opencode` like always.
+**Requirements:**
+- Linux x86_64 (native or WSL2 with systemd enabled)
+- `sudo` access for the install
+- `python3`
 
-## What you get
+```bash
+curl -fsSL https://raw.githubusercontent.com/tyresemaxeythegoat/opencode-unlimited-usage/main/install.sh | bash
+```
+
+Close and reopen your terminal after install (so `PATH` picks things up).
+
+---
+
+## How to Use It
+
+### Windows
+
+| Command / Shortcut | What it does |
+|---|---|
+| `opencode-desktop` or **`OpenCode (Unlimited)`** shortcut | Launches OpenCode Desktop through the Smart Lane proxy (`127.0.0.1:58245`) with loopback bypass |
+| `opencode` | Launches OpenCode CLI wrapped in Smart Lane with randomized edge + device ID |
+| `opencode-continue [session_id] [--max-cycles 15]` | Sends `"continue"`, watches for quota errors (`FreeUsageLimitError`, `"you've used today's free messages"`, `429`), automatically interrupts & reverts the failed turn, rotates WARP, and retries |
+| `opencode-hop` | Manually rotate to a fresh Cloudflare WARP IPv6 `/64` immediately |
+| `opencode-doctor` | Check WARP mode/connection, IPv6 egress, Smart Lane proxy, Zen Guard, and hop stats |
+
+#### Optional: Isolate WARP to OpenCode Only (`WarpProxy` mode on Windows)
+
+To prevent WARP reconnections from interrupting downloads, games, or browsing on your PC, switch WARP to local SOCKS5 `WarpProxy` mode (`127.0.0.1:40000` with `MASQUE`):
+
+```powershell
+warp-cli tunnel protocol set MASQUE
+warp-cli mode proxy
+warp-cli connect
+```
+
+Smart Lane (`lane_proxy.py`) automatically detects `WarpProxy` mode and routes **only** proxied OpenCode traffic through `127.0.0.1:40000` (failing closed if WARP is offline). You can also disable the `Cloudflare WARP.exe` tray app from Windows Startup Apps so `warp-svc.exe` runs silently in the background via `warp-cli`.
+
+### Linux & WSL2
 
 | Piece | What it does |
 |---|---|
 | `zen-lane` | wraps opencode: IPv6-only pin to opencode.ai + random CF edge + random machine-id per launch |
-| `zen-guard` | background watcher — sniffs opencode's own log for the wall error, rotates to a fresh /64 in ~10s |
-| `warp-keeper` | root service — keeps WARP connected (auto-repairs, fresh registration if the old one dies) and re-installs the kill-switch every 45s |
-| `zen-hop` | manual "give me a new /64 right now" button |
-| `doctor` | health check — tells you what's alive and what's not |
+| `zen-guard` | background watcher — sniffs opencode's own log for the wall error, rotates to a fresh `/64` in ~10s |
+| `warp-keeper` | root service — keeps WARP connected and re-installs the kill-switch every 45s |
+| `zen-hop` | manual "give me a new `/64` right now" button (`opencode-unlimited-hop`) |
+| `doctor` | health check (`opencode-unlimited-doctor`) |
 
-## Daily usage
-
-You don't change anything. Open `opencode`, pick a free model (flint, beam, deepseek, glm, etc. — whatever's on the free list this week), work.
-
-If you ever see the wall error:
-
-1. do nothing
-2. wait ~10 seconds (zen-guard is already rotating)
-3. re-send your message
-
-That's the entire workflow. If you want a new identity *right now* for whatever reason:
+Open `opencode` and work normally. If you hit a limit wall, wait ~10 seconds for `zen-guard` to rotate WARP and re-send your message, or run:
 
 ```bash
-opencode-unlimited-hop
-```
-
-And the health check:
-
-```bash
-opencode-unlimited-doctor
+opencode-unlimited-hop     # Rotate immediately
+opencode-unlimited-doctor  # Health check
 ```
 
 ## How it works (for people who read code)
@@ -102,37 +117,48 @@ No traffic leaves at all — that's by design. The keeper repairs the tunnel in 
 Your TUI session picked an edge whose bucket is full for that model. Close and reopen opencode — each launch picks a fresh random edge. The guard handles the /64 side automatically.
 
 **Does this work on Mac / Windows?**
-The scripts are Linux (systemd). WSL2 counts as Linux and is what I use daily. Mac would need the keeper adapted to launchd — haven't needed it.
+Native Windows 10/11 (CLI & Desktop, no WSL required) is supported via `install.ps1` / `windows/`. Linux and WSL2 (with systemd) are supported via `install.sh` / `scripts/`. Mac is not supported out of the box (would need a launchd service).
 
 **Is it unlimited though?**
 For a single human's normal use — yes, in practice. You're not going to hit walls you can't rotate out of. Don't be a robot about it.
 
-## Credit system (why every AI response says "Telegram:- @ElectronCursed")
+## Credit system (Linux installer note)
 
-If you came here from Telegram — hi. The installer drops a small agent-rules file (`~/.opencode/AGENTS.md`) that asks opencode's models to sign every response with my handle. Deleting it won't help for long: the lane wrapper re-checks it on every launch and rewrites it if it's gone or edited. It's harmless, it's one line, and it's how I find out people actually use this. Want it gone for real? `uninstall.sh` removes it.
+On Linux, the upstream `install.sh` drops a small agent-rules file (`~/.opencode/AGENTS.md`) from the original author (`@ElectronCursed`), removed cleanly by `uninstall.sh`. The native Windows installer (`install.ps1`) does not modify `~/.opencode/AGENTS.md`.
 
 ## Uninstall
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ELECTRONBREACH/opencode-unlimited-usage/main/uninstall.sh | bash
+### Windows
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-Removes the services, sudoers entry, firewall chain and wrapper. Your opencode data/sessions are untouched.
+Or double-click **`uninstall.bat`**.
+
+### Linux & WSL2
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tyresemaxeythegoat/opencode-unlimited-usage/main/uninstall.sh | bash
+```
+
+Removes the services, wrappers, startup hooks, and proxy state. Your OpenCode data/sessions are untouched.
 
 ## Files
 
 ```
-install.sh    — the one-command installer
-uninstall.sh  — clean removal
-AGENTS.md     — the credit file the installer enforces
+install.ps1 / install.bat     — Windows native installer
+uninstall.ps1 / uninstall.bat — Windows native uninstaller
+README_WINDOWS.md             — Full Windows guide
+windows/                      — Windows Smart Lane proxy, Desktop launcher, Zen Guard, Auto-Continue & CLI shims
+install.sh / uninstall.sh     — Linux / WSL2 installer and uninstaller
+AGENTS.md                     — Upstream Linux agent-rules file
 scripts/
-  warp-keeper.sh  — root service: TUN enforce + kill-switch repair loop
-  zen-lane.sh     — the lane itself (namespace + IPv6 pin + edge rotation + credit enforcement)
-  zen-guard.sh    — wall watcher + auto /64 rotation
-  zen-hop.sh      — manual identity rotation
-  doctor.sh       — health check
+  warp-keeper.sh              — Linux root service: TUN enforce + kill-switch repair loop
+  zen-lane.sh                 — Linux namespace + IPv6 pin + edge rotation
+  zen-guard.sh                — Linux wall watcher + auto /64 rotation
+  zen-hop.sh                  — Linux manual identity rotation
+  doctor.sh                   — Linux health check
 ```
 
-MIT license. Use it, fork it, just don't sell it to your grandma.
-
-— ELECTRONBREACH
+MIT license. Original Linux tool by ELECTRONBREACH. Windows port, Desktop Smart Lane, `opencode-continue`, and isolated `WarpProxy` mode maintained in this fork.
